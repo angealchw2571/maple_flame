@@ -21,12 +21,13 @@ INT = "INT"
 LUK = "LUK"
 
 # Set your main and secondary stats here
-MAIN_STAT = DEX  # Change this to your class's main stat (STR/DEX/INT/LUK)
-SECONDARY_STAT = STR  # Change this to your class's secondary stat (STR/DEX/INT/LUK)
+MAIN_STAT = INT  # Change this to your class's main stat (STR/DEX/INT/LUK)
+SECONDARY_STAT = LUK  # Change this to your class's secondary stat (STR/DEX/INT/LUK)
 
 # Add these near the top with other constants
-REROLL_DELAY = 0.1  # Delay between rerolls in seconds
-SPLIT_DELAY = 4     # Number of parts to split the delay into for stop key checking
+REROLL_DELAY = 0.5  # Delay between rerolls in seconds
+SPLIT_DELAY = 8  # Number of parts to split the delay into for stop key checking
+
 
 def find_and_activate_maplestory():
     """Find MapleStory process and activate its window"""
@@ -193,6 +194,13 @@ def extract_stats(image, is_before):
                 stats["weapon_attack"] = int(line.split("+")[1])
             except (IndexError, ValueError):
                 pass
+                
+        # Extract Magic Attack
+        if "MAGIC ATTACK" in line or "MAGIC ATT" in line:
+            try:
+                stats["magic_attack"] = int(line.split("+")[1])
+            except (IndexError, ValueError):
+                pass
 
         # Extract All Stats
         if "All Stats" in line:
@@ -210,21 +218,33 @@ def extract_stats(image, is_before):
 def calculate_flame_score(stats):
     """Calculate the flame score using the formula:
     Main Stat + (Weapon/Magic Attack × 4) + (% All Stat × 8) + (Secondary Stat/8)
+    For INT-based classes, use Magic Attack instead of Weapon Attack
     """
     # Calculate each component
     main_stat_value = stats["main_stat"]
-    weapon_att_value = stats["weapon_attack"] * 4
-    all_stat_value = stats["all_stat_percent"] * 8
+    
+    # Use magic attack for INT classes, weapon attack for others
+    if MAIN_STAT == INT:
+        attack_value = stats["magic_attack"] * 4
+        attack_type = "magic_attack"
+    else:
+        attack_value = stats["weapon_attack"] * 4
+        attack_type = "weapon_attack"
+    
+    all_stat_value = stats["all_stat_percent"] * 10
     secondary_stat_value = stats["secondary_stat"] / 8
 
     # Calculate total flame score
     flame_score = (
-        main_stat_value + weapon_att_value + all_stat_value + secondary_stat_value
+        main_stat_value + attack_value + all_stat_value + secondary_stat_value
     )
 
     # print(f"\nFlame Score Breakdown:")
     # print(f"Main Stat ({MAIN_STAT}): {main_stat_value}")
-    # print(f"Weapon Attack: {stats['weapon_attack']} → {weapon_att_value}")
+    # if MAIN_STAT == INT:
+    #     print(f"Magic Attack: {stats['magic_attack']} → {attack_value}")
+    # else:
+    #     print(f"Weapon Attack: {stats['weapon_attack']} → {attack_value}")
     # print(f"All Stat %: {stats['all_stat_percent']}% → {all_stat_value}")
     # print(f"Secondary Stat ({SECONDARY_STAT}): {stats['secondary_stat']} → {secondary_stat_value}")
     # print(f"Total Flame Score: {flame_score}")
@@ -255,41 +275,42 @@ def reroll(window_rect):
     """Click the 'Use One More' button if it exists"""
     # First ensure pyautogui safety
     pyautogui.FAILSAFE = True
-    
+
     # Calculate click coordinates
     button_x = window_rect[0] + 700  # Align with the stat boxes
     button_y = window_rect[1] + 630  # Below the after box
-    
+
     print(f"Attempting to click at coordinates: ({button_x}, {button_y})")
-    
+
     # Re-activate the window to ensure it's in focus
     hwnd = find_and_activate_maplestory()
     time.sleep(0.1)  # Give window time to come into focus
-    
+
     # Take debug screenshot before click
     debug_screenshot(button_x, button_y, "before_click_debug")
-    
+
     try:
         # Move to button location and click
         pyautogui.moveTo(button_x, button_y, duration=0.3)
         time.sleep(0.05)  # Small delay before click
         pyautogui.click()
         print("Click action performed")
-        
+
         # Press ENTER twice
         time.sleep(0.05)  # Small delay before key presses
-        pyautogui.press('enter')
+        pyautogui.press("enter")
         time.sleep(0.05)  # Small delay between presses
-        pyautogui.press('enter')
+        pyautogui.press("enter")
         print("Enter keys pressed")
-        
+
     except Exception as e:
         print(f"Error during mouse movement/click: {e}")
         import traceback
+
         traceback.print_exc()
-    
+
     time.sleep(0.5)  # Wait for click to register
-    
+
     # Take debug screenshot after click
     debug_screenshot(button_x, button_y, "after_click_debug")
 
@@ -323,18 +344,27 @@ def print_flame_scores(before_stats, after_stats, before_score, after_score):
     after_ss = f"  Secondary ({SECONDARY_STAT}): {ss_color}{after_stats['secondary_stat']}{RESET} → {ss_color}{after_stats['secondary_stat'] / 8:.3f}{RESET}"
     print(f"{before_ss:<{width}}|{after_ss}")
 
-    # Print weapon attack with color
-    wa_diff = after_stats["weapon_attack"] - before_stats["weapon_attack"]
-    wa_color = GREEN if wa_diff > 0 else RED if wa_diff < 0 else ""
-    before_wa = f"Weapon Attack: {before_stats['weapon_attack']} → {before_stats['weapon_attack'] * 4}"
-    after_wa = f"  Weapon Attack: {wa_color}{after_stats['weapon_attack']}{RESET} → {wa_color}{after_stats['weapon_attack'] * 4}{RESET}"
-    print(f"{before_wa:<{width}}|{after_wa}")
+    # Print attack stats with color (weapon or magic based on main stat)
+    if MAIN_STAT == INT:
+        # Print magic attack with color
+        ma_diff = after_stats["magic_attack"] - before_stats["magic_attack"]
+        ma_color = GREEN if ma_diff > 0 else RED if ma_diff < 0 else ""
+        before_ma = f"Magic Attack: {before_stats['magic_attack']} → {before_stats['magic_attack'] * 4}"
+        after_ma = f"  Magic Attack: {ma_color}{after_stats['magic_attack']}{RESET} → {ma_color}{after_stats['magic_attack'] * 4}{RESET}"
+        print(f"{before_ma:<{width}}|{after_ma}")
+    else:
+        # Print weapon attack with color
+        wa_diff = after_stats["weapon_attack"] - before_stats["weapon_attack"]
+        wa_color = GREEN if wa_diff > 0 else RED if wa_diff < 0 else ""
+        before_wa = f"Weapon Attack: {before_stats['weapon_attack']} → {before_stats['weapon_attack'] * 4}"
+        after_wa = f"  Weapon Attack: {wa_color}{after_stats['weapon_attack']}{RESET} → {wa_color}{after_stats['weapon_attack'] * 4}{RESET}"
+        print(f"{before_wa:<{width}}|{after_wa}")
 
     # Print all stat with color
     as_diff = after_stats["all_stat_percent"] - before_stats["all_stat_percent"]
     as_color = GREEN if as_diff > 0 else RED if as_diff < 0 else ""
-    before_as = f"All Stat %: {before_stats['all_stat_percent']}% → {before_stats['all_stat_percent'] * 8}"
-    after_as = f"  All Stat %: {as_color}{after_stats['all_stat_percent']}%{RESET} → {as_color}{after_stats['all_stat_percent'] * 8}{RESET}\n"
+    before_as = f"All Stat %: {before_stats['all_stat_percent']}% → {before_stats['all_stat_percent'] * 10}"
+    after_as = f"  All Stat %: {as_color}{after_stats['all_stat_percent']}%{RESET} → {as_color}{after_stats['all_stat_percent'] * 10}{RESET}\n"
     print(f"{before_as:<{width}}|{after_as}")
 
     # Print divider
@@ -359,23 +389,28 @@ def print_flame_scores(before_stats, after_stats, before_score, after_score):
 
 def check_stop_key():
     """Check if Ctrl+Esc is pressed"""
-    return keyboard.is_pressed('shift+esc')
+    return keyboard.is_pressed("shift+esc")
 
 
 def main():
     try:
         print("\nPress Ctrl+Esc at any time to stop the script\n")
-        
+        print("Script will also stop if flame score doesn't change for 5 consecutive attempts\n")
+
         # Find and activate MapleStory window
         find_and_activate_maplestory()
         window_rect = get_maplestory_window()
+        
+        # Initialize counter for unchanged scores
+        previous_after_score = None
+        unchanged_count = 0
 
         while True:  # Keep running until we get a better score
             # Check for stop key
             if check_stop_key():
                 print("\nCtrl+Esc detected. Stopping script...")
                 break
-                
+
             # Capture before box
             before_image = capture_stat_box(window_rect, is_before=True)
             before_stats = extract_stats(before_image, is_before=True)
@@ -388,6 +423,20 @@ def main():
 
             # Print side by side comparison
             print_flame_scores(before_stats, after_stats, before_score, after_score)
+            
+            # Check if score hasn't changed
+            if previous_after_score is not None and previous_after_score == after_score:
+                unchanged_count += 1
+                print(f"\nScore unchanged for {unchanged_count} consecutive attempts")
+                if unchanged_count >= 5:
+                    print("\nScore hasn't changed for 5 consecutive attempts. Stopping script...")
+                    break
+            else:
+                # Reset counter if score changed
+                unchanged_count = 0
+                
+            # Update previous score
+            previous_after_score = after_score
 
             # Check for stop key again
             if check_stop_key():
@@ -398,7 +447,7 @@ def main():
             if after_score < before_score:
                 print("\nAfter score is lower. Rerolling...")
                 reroll(window_rect)
-                
+
                 # Check for stop key during delay
                 split_time = REROLL_DELAY / SPLIT_DELAY
                 for _ in range(SPLIT_DELAY):  # Split delay into parts
@@ -413,6 +462,7 @@ def main():
     except Exception as e:
         print(f"Error: {e}")
         import traceback
+
         traceback.print_exc()
 
 
@@ -425,10 +475,10 @@ def elevate():
 
     # If we're not admin, rerun the script with admin privileges
     script = os.path.abspath(sys.argv[0])
-    params = ' '.join([script] + sys.argv[1:])
-    
+    params = " ".join([script] + sys.argv[1:])
+
     try:
-        shell.ShellExecuteEx(lpVerb='runas', lpFile=sys.executable, lpParameters=params)
+        shell.ShellExecuteEx(lpVerb="runas", lpFile=sys.executable, lpParameters=params)
         sys.exit()
     except Exception as e:
         print(f"Error elevating privileges: {e}")
