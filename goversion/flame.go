@@ -107,18 +107,30 @@ func updateDisplay(state *DisplayState) {
 	displayMutex.Unlock()
 }
 
+var (
+	headerPrinted = false
+)
+
 // renderDisplay renders the complete display to terminal
 func renderDisplay(state *DisplayState) {
-	clearTerminal()
+	// Only clear and print header once at the start
+	if !headerPrinted {
+		clearTerminal()
+		
+		// Print header
+		fmt.Printf("%sMapleStory Flame Scoring Tool - Live Mode%s\n", CYAN, RESET)
+		fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", 50), RESET)
+		fmt.Printf("Main Stat: %s%s%s | Secondary Stat: %s%s%s\n", GREEN, state.Config.MainStat, RESET, GREEN, state.Config.SecondaryStat, RESET)
+		fmt.Printf("Attempt: %s%d%s | Press Ctrl+F1 to exit\n", GREEN, state.TryCounter, RESET)
+		fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", 50), RESET)
+		
+		headerPrinted = true
+	} else {
+		// Just update the attempt counter in place
+		fmt.Printf("\033[4;10H%s%d%s", GREEN, state.TryCounter, RESET)
+	}
 	
-	// Print header
-	fmt.Printf("%sMapleStory Flame Scoring Tool - Live Mode%s\n", CYAN, RESET)
-	fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", 50), RESET)
-	fmt.Printf("Main Stat: %s%s%s | Secondary Stat: %s%s%s\n", GREEN, state.Config.MainStat, RESET, GREEN, state.Config.SecondaryStat, RESET)
-	fmt.Printf("Attempt: %s%d%s | Press Ctrl+F1 to exit\n", GREEN, state.TryCounter, RESET)
-	fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", 50), RESET)
-	
-	// Print status
+	// Print status only if it exists and is different
 	if state.Status != "" {
 		fmt.Printf("\n%s%s%s\n", CYAN, state.Status, RESET)
 	}
@@ -421,6 +433,55 @@ func printFlameComparisonBuffer(beforeResult, afterResult *FlameResult, config *
 	}
 }
 
+// printFlameComparisonWithClearedAfter prints comparison table with cleared AFTER values
+func printFlameComparisonWithClearedAfter(beforeResult *FlameResult, config *flame.FlameConfig) {
+	leftWidth := 35  // Fixed width for left column
+	rightWidth := 35 // Fixed width for right column
+
+	// Print header
+	fmt.Printf("\n\n%s%s%s\n", CYAN, strings.Repeat("=", leftWidth+rightWidth+3), RESET)
+	fmt.Printf("%s%-*s%s|%s%-*s%s\n", GREEN, leftWidth, "BEFORE", RESET, GREEN, rightWidth, "AFTER", RESET)
+	fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", leftWidth+rightWidth+3), RESET)
+
+	// Print stats with BEFORE values and empty AFTER values
+	beforeMainStat := fmt.Sprintf("Main Stat (%s): %d", config.MainStat, beforeResult.Stats.MainStat)
+	afterMainStat := fmt.Sprintf("Main Stat (%s): ", config.MainStat)
+	fmt.Printf("\n%-*s|  %s\n", leftWidth, beforeMainStat, afterMainStat)
+
+	beforeSS := fmt.Sprintf("Secondary (%s): %d → %.3f", config.SecondaryStat, beforeResult.Stats.SecondaryStat, float64(beforeResult.Stats.SecondaryStat)/8)
+	afterSS := fmt.Sprintf("Secondary (%s):  → ", config.SecondaryStat)
+	fmt.Printf("%-*s|  %s\n", leftWidth, beforeSS, afterSS)
+
+	// Attack stats (weapon or magic based on main stat)
+	if config.MainStat == flame.INT {
+		beforeMA := fmt.Sprintf("Magic Attack: %d → %d", beforeResult.Stats.MagicAttack, beforeResult.Stats.MagicAttack*4)
+		afterMA := fmt.Sprintf("Magic Attack:  → ")
+		fmt.Printf("%-*s|  %s\n", leftWidth, beforeMA, afterMA)
+	} else {
+		beforeWA := fmt.Sprintf("Weapon Attack: %d → %d", beforeResult.Stats.WeaponAttack, beforeResult.Stats.WeaponAttack*4)
+		afterWA := fmt.Sprintf("Weapon Attack:  → ")
+		fmt.Printf("%-*s|  %s\n", leftWidth, beforeWA, afterWA)
+	}
+
+	beforeAS := fmt.Sprintf("All Stat %%: %d%% → %d", beforeResult.Stats.AllStatPercent, beforeResult.Stats.AllStatPercent*10)
+	afterAS := fmt.Sprintf("All Stat %%: %% → ")
+	fmt.Printf("%-*s|  %s\n", leftWidth, beforeAS, afterAS)
+
+	beforeCP := fmt.Sprintf("CP Increase: %d", beforeResult.Stats.CPIncrease)
+	afterCP := fmt.Sprintf("CP Increase: ")
+	fmt.Printf("%-*s|  %s\n", leftWidth, beforeCP, afterCP)
+
+	// Print divider
+	fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("-", leftWidth+rightWidth+3), RESET)
+
+	beforeScore := fmt.Sprintf("Total Score: %.3f", beforeResult.Score)
+	afterScore := fmt.Sprintf("Total Score: ")
+	fmt.Printf("%-*s|  %s\n", leftWidth, beforeScore, afterScore)
+	fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", leftWidth+rightWidth+3), RESET)
+
+	fmt.Printf("\n\nScore Difference: \n\n\n")
+}
+
 // logSuccess writes a success message to the log file
 func logSuccess(logFilePath string, beforeResult, afterResult *FlameResult, config *flame.FlameConfig) error {
 	f, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -516,7 +577,7 @@ func main() {
 
 	// Main loop
 	rerollDelay := 0.5 // seconds between rerolls
-	splitDelay := 8    // number of parts to split the delay for key checking
+	splitDelay := 4    // number of parts to split the delay for key checking
 	splitTime := time.Duration(float64(rerollDelay) * float64(time.Second) / float64(splitDelay))
 
 	for {
@@ -530,7 +591,7 @@ func main() {
 				ExitMessage: "Ctrl+F1 detected. Exiting...",
 				ShouldExit:  true,
 			})
-			time.Sleep(1 * time.Second) // Let final message display
+			time.Sleep(500 * time.Millisecond) // Let final message display
 			break
 		}
 
@@ -549,7 +610,7 @@ func main() {
 				ExitMessage: fmt.Sprintf("Error capturing before stats: %v", err),
 				ShouldExit:  true,
 			})
-			time.Sleep(2 * time.Second)
+			time.Sleep(500 * time.Millisecond)
 			break
 		}
 
@@ -562,7 +623,7 @@ func main() {
 				ExitMessage: fmt.Sprintf("Error capturing after stats: %v", err),
 				ShouldExit:  true,
 			})
-			time.Sleep(2 * time.Second)
+			time.Sleep(500 * time.Millisecond)
 			break
 		}
 
@@ -592,7 +653,7 @@ func main() {
 					ExitMessage:  "Score hasn't changed for 3 consecutive attempts. Stopping script...",
 					ShouldExit:   true,
 				})
-				time.Sleep(2 * time.Second)
+				time.Sleep(500 * time.Millisecond)
 				break
 			}
 		} else {
@@ -611,7 +672,7 @@ func main() {
 				ExitMessage: "Ctrl+F1 detected. Exiting...",
 				ShouldExit:  true,
 			})
-			time.Sleep(1 * time.Second)
+			time.Sleep(500 * time.Millisecond)
 			break
 		}
 
@@ -626,7 +687,7 @@ func main() {
 				ShouldExit:   true,
 			})
 			logSuccess(logFilePath, beforeResult, afterResult, config)
-			time.Sleep(3 * time.Second)
+			time.Sleep(500 * time.Millisecond)
 			break
 		}
 
@@ -641,23 +702,34 @@ func main() {
 				ShouldExit:   true,
 			})
 			logSuccess(logFilePath, beforeResult, afterResult, config)
-			time.Sleep(3 * time.Second)
+			time.Sleep(500 * time.Millisecond)
 			break
 		}
 
-		// Update display with reroll message
+		// Update display with reroll message and cleared AFTER values
 		statusMsg := fmt.Sprintf("After score is lower. Rerolling in %.1f seconds...", rerollDelay)
 		if unchangedCount > 0 {
 			statusMsg = fmt.Sprintf("Score unchanged for %d attempts. Rerolling in %.1f seconds...", unchangedCount, rerollDelay)
 		}
 		
-		updateDisplay(&DisplayState{
-			Config:        config,
-			TryCounter:    tryCounter,
-			BeforeResult:  beforeResult,
-			AfterResult:   afterResult,
-			StatusMessage: statusMsg,
-		})
+		// Show the table with cleared AFTER values before rerolling
+		if !headerPrinted {
+			clearTerminal()
+			fmt.Printf("%sMapleStory Flame Scoring Tool - Live Mode%s\n", CYAN, RESET)
+			fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", 50), RESET)
+			fmt.Printf("Main Stat: %s%s%s | Secondary Stat: %s%s%s\n", GREEN, config.MainStat, RESET, GREEN, config.SecondaryStat, RESET)
+			fmt.Printf("Attempt: %s%d%s | Press Ctrl+F1 to exit\n", GREEN, tryCounter, RESET)
+			fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", 50), RESET)
+			headerPrinted = true
+		} else {
+			fmt.Printf("\033[4;10H%s%d%s", GREEN, tryCounter, RESET)
+		}
+		
+		// Show comparison with cleared AFTER values
+		printFlameComparisonWithClearedAfter(beforeResult, config)
+		
+		// Print reroll message
+		fmt.Printf("\n%s%s%s\n", CYAN, statusMsg, RESET)
 
 		// Get the window rectangle again for clicking
 		windowRect, err := window.GetMaplestoryWindow()
