@@ -48,7 +48,7 @@ func ClickRerollButton(windowRect *window.WindowRect, offsetX, offsetY int) erro
 	if ret == 0 {
 		return fmt.Errorf("failed to set cursor position")
 	}
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	
 	// Perform mouse click
 	procMouseEvent.Call(
@@ -62,15 +62,15 @@ func ClickRerollButton(windowRect *window.WindowRect, offsetX, offsetY int) erro
 	)
 	
 	// Press ENTER multiple times
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(80 * time.Millisecond)
 	PressKey(VK_RETURN)
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(80 * time.Millisecond)
 	PressKey(VK_RETURN)
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(80 * time.Millisecond)
 	PressKey(VK_RETURN)
 	
 	// Success
-	time.Sleep(500 * time.Millisecond) // Wait for click to register
+	time.Sleep(300 * time.Millisecond) // Wait for click to register
 	
 	return nil
 }

@@ -132,15 +132,10 @@ func ExtractFlameText(imagePath string) (string, error) {
 	enhancedPath, err := enhanceImageForOCR(imagePath)
 	if err != nil {
 		// If enhancement fails, use original image
-		enhancedPath = imagePath
+		return extractTextDirectly(imagePath)
 	}
-	defer func() {
-		if enhancedPath != imagePath {
-			os.Remove(enhancedPath) // Clean up enhanced image
-		}
-	}()
 
-	// Call tesseract with optimized settings for flame stats
+	// Call tesseract with optimized settings for enhanced image
 	outputPath := strings.TrimSuffix(enhancedPath, ".png")
 	
 	// Use specific tesseract configuration for small text and stats
@@ -154,13 +149,8 @@ func ExtractFlameText(imagePath string) (string, error) {
 	
 	err = cmd.Run()
 	if err != nil {
-		// Fallback to basic tesseract if optimized version fails
-		fmt.Println("Warning: Optimized tesseract failed, trying basic version")
-		cmd = exec.Command("tesseract", imagePath, outputPath)
-		err = cmd.Run()
-		if err != nil {
-			return "", fmt.Errorf("tesseract failed: %v", err)
-		}
+		// Fallback to original image if enhanced OCR fails
+		return extractTextDirectly(imagePath)
 	}
 	
 	// Read the output file
@@ -172,52 +162,36 @@ func ExtractFlameText(imagePath string) (string, error) {
 	// Clean up the temp output file
 	os.Remove(outputPath + ".txt")
 	
-	// Convert bytes to string and clean up
+	// Convert bytes to string
 	text := string(textBytes)
-	
-	// Post-process the text to fix common OCR errors
-	text = cleanupFlameText(text)
 	
 	return text, nil
 }
 
-// cleanupFlameText performs post-processing to fix common OCR errors in flame stats
-func cleanupFlameText(text string) string {
-	// Common OCR corrections for flame stats
-	replacements := map[string]string{
-		"l+":    "+",     // lowercase l mistaken for +
-		"I+":    "+",     // uppercase I mistaken for +
-		"|+":    "+",     // pipe mistaken for +
-		"STF":   "STR",   // F mistaken for R
-		"DEV":   "DEX",   // V mistaken for X
-		"lNT":   "INT",   // l mistaken for I
-		"INT":   "INT",   // This is correct
-		"LUK":   "LUK",   // This is correct
-		"CP lncrease": "CP Increase", // l mistaken for I
-		"CP Inorease": "CP Increase", // o mistaken for c
-		"CP Incnease": "CP Increase", // n mistaken for r
-		"Max}":  "Max",   // } mistaken for end
-		"MaxI":  "Max",   // I mistaken for nothing
-		"Att":   "Attack", // Shortened Attack
+// extractTextDirectly runs OCR on the original image without enhancement
+func extractTextDirectly(imagePath string) (string, error) {
+	outputPath := strings.TrimSuffix(imagePath, ".png")
+	cmd := exec.Command("tesseract", imagePath, outputPath, "--oem", "3", "--psm", "6")
+	
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("tesseract failed: %v", err)
 	}
 	
-	// Apply replacements
-	for old, new := range replacements {
-		text = strings.ReplaceAll(text, old, new)
+	// Read the output file
+	textBytes, err := os.ReadFile(outputPath + ".txt")
+	if err != nil {
+		return "", fmt.Errorf("failed to read OCR output: %v", err)
 	}
 	
-	// Remove extra spaces and normalize whitespace
-	lines := strings.Split(text, "\n")
-	var cleanLines []string
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			cleanLines = append(cleanLines, line)
-		}
-	}
+	// Clean up the temp output file
+	os.Remove(outputPath + ".txt")
 	
-	return strings.Join(cleanLines, "\n")
+	text := string(textBytes)
+	
+	return text, nil
 }
+
 
 // enhanceImageForOCR loads an image, applies light enhancement, and saves it
 func enhanceImageForOCR(imagePath string) (string, error) {
@@ -246,8 +220,6 @@ func enhanceImageForOCR(imagePath string) (string, error) {
 	}
 
 	// Apply light enhancement (2x upscale + gentle sharpening)
-	// We need to import the screenshot package, but can't due to circular imports
-	// So let's implement a simple 2x upscale here
 	enhanced := simpleUpscale2x(rgba)
 
 	// Save enhanced image

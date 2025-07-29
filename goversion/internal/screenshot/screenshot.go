@@ -241,7 +241,93 @@ func CombineImagesHorizontal(leftImg, rightImg *image.RGBA, tryNumber int) (stri
 		return "", fmt.Errorf("failed to encode combined image: %v", err)
 	}
 
+	// Clean up old combined images if we're beyond the max
+	if tryNumber > maxScreenshots {
+		// Remove the oldest combined image (tryNumber - maxScreenshots)
+		oldFile := filepath.Join(tempDir, fmt.Sprintf("combined_flame_%d.png", tryNumber-maxScreenshots))
+		if err := os.Remove(oldFile); err != nil && !os.IsNotExist(err) {
+			// Just log the error but don't fail the operation
+			fmt.Printf("Warning: Failed to remove old combined image: %v\n", err)
+		}
+	}
+
 	return filename, nil
+}
+
+// CombineEnhancedImages loads enhanced images from disk and combines them
+// This is used to combine the OCR-enhanced versions of the images
+func CombineEnhancedImages(tryNumber int) (string, error) {
+	tempDir := filepath.Join(".", "temp")
+	
+	// Load the enhanced images
+	beforePath := filepath.Join(tempDir, fmt.Sprintf("temp_before_%d_enhanced.png", tryNumber))
+	afterPath := filepath.Join(tempDir, fmt.Sprintf("temp_after_%d_enhanced.png", tryNumber))
+	
+	// Check if enhanced images exist
+	if _, err := os.Stat(beforePath); os.IsNotExist(err) {
+		return "", fmt.Errorf("enhanced before image not found: %s", beforePath)
+	}
+	if _, err := os.Stat(afterPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("enhanced after image not found: %s", afterPath)
+	}
+	
+	// Load images
+	beforeFile, err := os.Open(beforePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open before image: %v", err)
+	}
+	defer beforeFile.Close()
+	
+	afterFile, err := os.Open(afterPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open after image: %v", err)
+	}
+	defer afterFile.Close()
+	
+	beforeImg, err := png.Decode(beforeFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode before image: %v", err)
+	}
+	
+	afterImg, err := png.Decode(afterFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode after image: %v", err)
+	}
+	
+	// Convert to RGBA
+	beforeRGBA := image.NewRGBA(beforeImg.Bounds())
+	for y := beforeImg.Bounds().Min.Y; y < beforeImg.Bounds().Max.Y; y++ {
+		for x := beforeImg.Bounds().Min.X; x < beforeImg.Bounds().Max.X; x++ {
+			beforeRGBA.Set(x, y, beforeImg.At(x, y))
+		}
+	}
+	
+	afterRGBA := image.NewRGBA(afterImg.Bounds())
+	for y := afterImg.Bounds().Min.Y; y < afterImg.Bounds().Max.Y; y++ {
+		for x := afterImg.Bounds().Min.X; x < afterImg.Bounds().Max.X; x++ {
+			afterRGBA.Set(x, y, afterImg.At(x, y))
+		}
+	}
+	
+	// Close files before deleting
+	beforeFile.Close()
+	afterFile.Close()
+	
+	// Use the existing CombineImagesHorizontal function
+	result, err := CombineImagesHorizontal(beforeRGBA, afterRGBA, tryNumber)
+	if err != nil {
+		return "", err
+	}
+	
+	// Delete the enhanced images after combining
+	os.Remove(beforePath)
+	os.Remove(afterPath)
+	
+	// Also delete the original temp images
+	os.Remove(filepath.Join(tempDir, fmt.Sprintf("temp_before_%d.png", tryNumber)))
+	os.Remove(filepath.Join(tempDir, fmt.Sprintf("temp_after_%d.png", tryNumber)))
+	
+	return result, nil
 }
 
 // EnhanceImageForOCR enhances an image for better OCR accuracy by upscaling and sharpening

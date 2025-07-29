@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"maple_flame/goversion/internal/automation"
@@ -46,110 +45,7 @@ type FlameResult struct {
 // Global variables
 var (
 	logFile string
-	displayBuffer []string
-	displayMutex sync.Mutex
 )
-
-// DisplayState holds all the information needed for the display
-type DisplayState struct {
-	Config        *flame.FlameConfig
-	TryCounter    int
-	Status        string
-	BeforeResult  *FlameResult
-	AfterResult   *FlameResult
-	StatusMessage string
-	ExitMessage   string
-	ShouldExit    bool
-}
-
-var (
-	currentDisplay *DisplayState
-	displayActive  bool
-)
-
-// clearTerminal clears the terminal screen
-func clearTerminal() {
-	fmt.Print("\033[H\033[2J")
-}
-
-// startDisplayRefresh starts the display refresh goroutine at 1000ms intervals (1 FPS)
-func startDisplayRefresh() {
-	displayActive = true
-	go func() {
-		ticker := time.NewTicker(1000 * time.Millisecond)
-		defer ticker.Stop()
-		
-		for displayActive {
-			select {
-			case <-ticker.C:
-				displayMutex.Lock()
-				if currentDisplay != nil {
-					renderDisplay(currentDisplay)
-					if currentDisplay.ShouldExit {
-						displayActive = false
-					}
-				}
-				displayMutex.Unlock()
-			}
-		}
-	}()
-}
-
-// stopDisplayRefresh stops the display refresh
-func stopDisplayRefresh() {
-	displayActive = false
-}
-
-// updateDisplay updates the current display state
-func updateDisplay(state *DisplayState) {
-	displayMutex.Lock()
-	currentDisplay = state
-	displayMutex.Unlock()
-}
-
-var (
-	headerPrinted = false
-)
-
-// renderDisplay renders the complete display to terminal
-func renderDisplay(state *DisplayState) {
-	// Only clear and print header once at the start
-	if !headerPrinted {
-		clearTerminal()
-		
-		// Print header
-		fmt.Printf("%sMapleStory Flame Scoring Tool - Live Mode%s\n", CYAN, RESET)
-		fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", 50), RESET)
-		fmt.Printf("Main Stat: %s%s%s | Secondary Stat: %s%s%s\n", GREEN, state.Config.MainStat, RESET, GREEN, state.Config.SecondaryStat, RESET)
-		fmt.Printf("Attempt: %s%d%s | Press Ctrl+F1 to exit\n", GREEN, state.TryCounter, RESET)
-		fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", 50), RESET)
-		
-		headerPrinted = true
-	} else {
-		// Just update the attempt counter in place
-		fmt.Printf("\033[4;10H%s%d%s", GREEN, state.TryCounter, RESET)
-	}
-	
-	// Print status only if it exists and is different
-	if state.Status != "" {
-		fmt.Printf("\n%s%s%s\n", CYAN, state.Status, RESET)
-	}
-	
-	// Print flame comparison if both results exist
-	if state.BeforeResult != nil && state.AfterResult != nil {
-		printFlameComparisonBuffer(state.BeforeResult, state.AfterResult, state.Config)
-	}
-	
-	// Print status message
-	if state.StatusMessage != "" {
-		fmt.Printf("\n%s%s%s\n", CYAN, state.StatusMessage, RESET)
-	}
-	
-	// Print exit message
-	if state.ExitMessage != "" {
-		fmt.Printf("\n%s%s%s\n", GREEN, state.ExitMessage, RESET)
-	}
-}
 
 
 // setupLogging creates the temp directory and clears all files
@@ -176,23 +72,22 @@ func setupLogging() (string, error) {
 	}
 
 	// Create new log file
-	timestamp := time.Now().Format("20060102_150405")
-	logFile := filepath.Join(tempDir, fmt.Sprintf("flame_logs_%s.txt", timestamp))
+	logFile := filepath.Join(tempDir, "flame_logs.txt")
 
 	return logFile, nil
 }
 
 // logFlameResult writes flame result to the log file
-func logFlameResult(logFilePath string, result *FlameResult, config *flame.FlameConfig, label string) error {
+func logFlameResult(logFilePath string, result *FlameResult, config *flame.FlameConfig, label string, attemptNumber int) error {
 	f, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	// Write timestamp and label
+	// Write timestamp and label with attempt number
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
-	f.WriteString(fmt.Sprintf("\n===== %s Flame Scan: %s =====\n", label, timestamp))
+	f.WriteString(fmt.Sprintf("\n===== %s Flame Scan (Attempt #%d): %s =====\n", label, attemptNumber, timestamp))
 	f.WriteString(result.RawText)
 	f.WriteString("\n")
 
@@ -240,7 +135,7 @@ func captureFlameStats(logFilePath string, config *flame.FlameConfig, isBefore b
 	}
 
 	// Wait for UI to render before OCR
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 
 	// Create a temporary image file for OCR (we'll delete it after)
 	tempDir := filepath.Join(".", "temp")
@@ -258,7 +153,6 @@ func captureFlameStats(logFilePath string, config *flame.FlameConfig, isBefore b
 		return nil, fmt.Errorf("error creating temp image file: %v", err)
 	}
 	defer f.Close()
-	defer os.Remove(tempImagePath) // Clean up temp file
 	
 	err = png.Encode(f, img)
 	if err != nil {
@@ -271,6 +165,8 @@ func captureFlameStats(logFilePath string, config *flame.FlameConfig, isBefore b
 	if err != nil {
 		return nil, fmt.Errorf("OCR extraction error: %v", err)
 	}
+	
+	// Don't delete temp files here - they'll be cleaned up after combining
 
 	// OCR text is logged to file, no need to print to terminal in live mode
 
@@ -303,10 +199,12 @@ func captureFlameStats(logFilePath string, config *flame.FlameConfig, isBefore b
 	if !isBefore {
 		label = "AFTER"
 	}
-	logFlameResult(logFilePath, result, config, label)
+	logFlameResult(logFilePath, result, config, label, tryNumber)
 
 	return result, nil
 }
+
+const BLACK = "\033[30m"
 
 // printFlameComparisonBuffer prints before and after flame scores side by side (for buffer system)
 func printFlameComparisonBuffer(beforeResult, afterResult *FlameResult, config *flame.FlameConfig) {
@@ -318,6 +216,16 @@ func printFlameComparisonBuffer(beforeResult, afterResult *FlameResult, config *
 	fmt.Printf("%s%-*s%s|%s%-*s%s\n", GREEN, leftWidth, "BEFORE", RESET, GREEN, rightWidth, "AFTER", RESET)
 	fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", leftWidth+rightWidth+3), RESET)
 
+	// Clear any residual colors by printing a reset sequence
+	fmt.Printf("%s", RESET)
+	
+	// Print normally with colors
+	printComparisonRows(beforeResult, afterResult, config, leftWidth, "")
+}
+
+// printComparisonRows prints the data rows of the comparison (with black AFTER values if forceBlack is BLACK)
+func printComparisonRows(beforeResult, afterResult *FlameResult, config *flame.FlameConfig, leftWidth int, forceBlack string) {
+
 	// Print main stat with color
 	mainStatDiff := afterResult.Stats.MainStat - beforeResult.Stats.MainStat
 	mainStatColor := GREEN
@@ -325,6 +233,11 @@ func printFlameComparisonBuffer(beforeResult, afterResult *FlameResult, config *
 		mainStatColor = RED
 	} else if mainStatDiff == 0 {
 		mainStatColor = WHITE
+	}
+	
+	// Use black color if forceBlack is set, otherwise use calculated color
+	if forceBlack == BLACK {
+		mainStatColor = BLACK
 	}
 
 	beforeMainStat := fmt.Sprintf("Main Stat (%s): %d", config.MainStat, beforeResult.Stats.MainStat)
@@ -338,6 +251,11 @@ func printFlameComparisonBuffer(beforeResult, afterResult *FlameResult, config *
 		ssColor = RED
 	} else if ssDiff == 0 {
 		ssColor = WHITE
+	}
+	
+	// Use black color if forceBlack is set, otherwise use calculated color
+	if forceBlack == BLACK {
+		ssColor = BLACK
 	}
 
 	beforeSS := fmt.Sprintf("Secondary (%s): %d → %.3f", config.SecondaryStat, beforeResult.Stats.SecondaryStat, float64(beforeResult.Stats.SecondaryStat)/8)
@@ -354,6 +272,11 @@ func printFlameComparisonBuffer(beforeResult, afterResult *FlameResult, config *
 		} else if maDiff == 0 {
 			maColor = WHITE
 		}
+		
+		// Use black color if forceBlack is set, otherwise use calculated color
+		if forceBlack == BLACK {
+			maColor = BLACK
+		}
 
 		beforeMA := fmt.Sprintf("Magic Attack: %d → %d", beforeResult.Stats.MagicAttack, beforeResult.Stats.MagicAttack*4)
 		afterMA := fmt.Sprintf("Magic Attack: %s%d%s → %s%d%s", maColor, afterResult.Stats.MagicAttack, RESET, maColor, afterResult.Stats.MagicAttack*4, RESET)
@@ -366,6 +289,11 @@ func printFlameComparisonBuffer(beforeResult, afterResult *FlameResult, config *
 			waColor = RED
 		} else if waDiff == 0 {
 			waColor = WHITE
+		}
+		
+		// Use black color if forceBlack is set, otherwise use calculated color
+		if forceBlack == BLACK {
+			waColor = BLACK
 		}
 
 		beforeWA := fmt.Sprintf("Weapon Attack: %d → %d", beforeResult.Stats.WeaponAttack, beforeResult.Stats.WeaponAttack*4)
@@ -381,6 +309,11 @@ func printFlameComparisonBuffer(beforeResult, afterResult *FlameResult, config *
 	} else if asDiff == 0 {
 		asColor = WHITE
 	}
+	
+	// Use black color if forceBlack is set, otherwise use calculated color
+	if forceBlack == BLACK {
+		asColor = BLACK
+	}
 
 	beforeAS := fmt.Sprintf("All Stat %%: %d%% → %d", beforeResult.Stats.AllStatPercent, beforeResult.Stats.AllStatPercent*10)
 	afterAS := fmt.Sprintf("All Stat %%: %s%d%%%s → %s%d%s", asColor, afterResult.Stats.AllStatPercent, RESET, asColor, afterResult.Stats.AllStatPercent*10, RESET)
@@ -395,13 +328,18 @@ func printFlameComparisonBuffer(beforeResult, afterResult *FlameResult, config *
 	} else {
 		cpColor = WHITE
 	}
+	
+	// Use black color if forceBlack is set, otherwise use calculated color
+	if forceBlack == BLACK {
+		cpColor = BLACK
+	}
 
 	beforeCP := fmt.Sprintf("CP Increase: %d", beforeResult.Stats.CPIncrease)
 	afterCP := fmt.Sprintf("CP Increase: %s%d%s", cpColor, afterResult.Stats.CPIncrease, RESET)
 	fmt.Printf("%-*s|  %s\n", leftWidth, beforeCP, afterCP)
 
 	// Print divider
-	fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("-", leftWidth+rightWidth+3), RESET)
+	fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("-", leftWidth+35+3), RESET)
 
 	// Print total scores with color
 	scoreDiff := afterResult.Score - beforeResult.Score
@@ -411,89 +349,49 @@ func printFlameComparisonBuffer(beforeResult, afterResult *FlameResult, config *
 	} else if scoreDiff == 0 {
 		scoreColor = WHITE
 	}
+	
+	// Use black color if forceBlack is set, otherwise use calculated color
+	if forceBlack == BLACK {
+		scoreColor = BLACK
+	}
 
 	beforeScore := fmt.Sprintf("Total Score: %.3f", beforeResult.Score)
 	afterScore := fmt.Sprintf("Total Score: %s%.3f%s", scoreColor, afterResult.Score, RESET)
 	fmt.Printf("%-*s|  %s\n", leftWidth, beforeScore, afterScore)
-	fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", leftWidth+rightWidth+3), RESET)
+	fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", leftWidth+35+3), RESET)
 
-	// Print score difference with color
-	diff := afterResult.Score - beforeResult.Score
-	color := GREEN
-	if diff < 0 {
-		color = RED
-	} else if diff == 0 {
-		color = WHITE
-	}
+	// Print score difference with color (skip if forceBlack is set)
+	if forceBlack != BLACK {
+		diff := afterResult.Score - beforeResult.Score
+		color := GREEN
+		if diff < 0 {
+			color = RED
+		} else if diff == 0 {
+			color = WHITE
+		}
 
-	if diff > 0 {
-		fmt.Printf("\n\nScore Difference: %s+%.3f%s\n\n\n", color, diff, RESET)
-	} else {
-		fmt.Printf("\n\nScore Difference: %s%.3f%s\n\n\n", color, diff, RESET)
+		if diff > 0 {
+			fmt.Printf("\n\nScore Difference: %s+%.3f%s\n\n\n", color, diff, RESET)
+		} else {
+			fmt.Printf("\n\nScore Difference: %s%.3f%s\n\n\n", color, diff, RESET)
+		}
 	}
 }
 
-// printFlameComparisonWithClearedAfter prints comparison table with cleared AFTER values
-func printFlameComparisonWithClearedAfter(beforeResult *FlameResult, config *flame.FlameConfig) {
-	leftWidth := 35  // Fixed width for left column
-	rightWidth := 35 // Fixed width for right column
-
-	// Print header
-	fmt.Printf("\n\n%s%s%s\n", CYAN, strings.Repeat("=", leftWidth+rightWidth+3), RESET)
-	fmt.Printf("%s%-*s%s|%s%-*s%s\n", GREEN, leftWidth, "BEFORE", RESET, GREEN, rightWidth, "AFTER", RESET)
-	fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", leftWidth+rightWidth+3), RESET)
-
-	// Print stats with BEFORE values and empty AFTER values
-	beforeMainStat := fmt.Sprintf("Main Stat (%s): %d", config.MainStat, beforeResult.Stats.MainStat)
-	afterMainStat := fmt.Sprintf("Main Stat (%s): ", config.MainStat)
-	fmt.Printf("\n%-*s|  %s\n", leftWidth, beforeMainStat, afterMainStat)
-
-	beforeSS := fmt.Sprintf("Secondary (%s): %d → %.3f", config.SecondaryStat, beforeResult.Stats.SecondaryStat, float64(beforeResult.Stats.SecondaryStat)/8)
-	afterSS := fmt.Sprintf("Secondary (%s):  → ", config.SecondaryStat)
-	fmt.Printf("%-*s|  %s\n", leftWidth, beforeSS, afterSS)
-
-	// Attack stats (weapon or magic based on main stat)
-	if config.MainStat == flame.INT {
-		beforeMA := fmt.Sprintf("Magic Attack: %d → %d", beforeResult.Stats.MagicAttack, beforeResult.Stats.MagicAttack*4)
-		afterMA := fmt.Sprintf("Magic Attack:  → ")
-		fmt.Printf("%-*s|  %s\n", leftWidth, beforeMA, afterMA)
-	} else {
-		beforeWA := fmt.Sprintf("Weapon Attack: %d → %d", beforeResult.Stats.WeaponAttack, beforeResult.Stats.WeaponAttack*4)
-		afterWA := fmt.Sprintf("Weapon Attack:  → ")
-		fmt.Printf("%-*s|  %s\n", leftWidth, beforeWA, afterWA)
-	}
-
-	beforeAS := fmt.Sprintf("All Stat %%: %d%% → %d", beforeResult.Stats.AllStatPercent, beforeResult.Stats.AllStatPercent*10)
-	afterAS := fmt.Sprintf("All Stat %%: %% → ")
-	fmt.Printf("%-*s|  %s\n", leftWidth, beforeAS, afterAS)
-
-	beforeCP := fmt.Sprintf("CP Increase: %d", beforeResult.Stats.CPIncrease)
-	afterCP := fmt.Sprintf("CP Increase: ")
-	fmt.Printf("%-*s|  %s\n", leftWidth, beforeCP, afterCP)
-
-	// Print divider
-	fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("-", leftWidth+rightWidth+3), RESET)
-
-	beforeScore := fmt.Sprintf("Total Score: %.3f", beforeResult.Score)
-	afterScore := fmt.Sprintf("Total Score: ")
-	fmt.Printf("%-*s|  %s\n", leftWidth, beforeScore, afterScore)
-	fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", leftWidth+rightWidth+3), RESET)
-
-	fmt.Printf("\n\nScore Difference: \n\n\n")
-}
 
 // logSuccess writes a success message to the log file
-func logSuccess(logFilePath string, beforeResult, afterResult *FlameResult, config *flame.FlameConfig) error {
+func logSuccess(logFilePath string, beforeResult, afterResult *FlameResult, config *flame.FlameConfig, attemptNumber int) error {
 	f, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	f.WriteString("\n===== SUCCESS: BETTER FLAME SCORE ACHIEVED =====\n")
+	f.WriteString(fmt.Sprintf("\n===== SUCCESS: BETTER FLAME SCORE ACHIEVED (Attempt #%d) =====\n", attemptNumber))
 	f.WriteString(fmt.Sprintf("Before Score: %.3f\n", beforeResult.Score))
 	f.WriteString(fmt.Sprintf("After Score: %.3f\n", afterResult.Score))
 	f.WriteString(fmt.Sprintf("Improvement: +%.3f\n", afterResult.Score-beforeResult.Score))
+	f.WriteString(fmt.Sprintf("Timestamp: %s\n", time.Now().Format("2006-01-02 15:04:05")))
 
 	return nil
 }
@@ -502,6 +400,7 @@ func main() {
 	// Parse command line arguments
 	mainStatStr := flag.String("main", "", "Main stat (STR/DEX/INT/LUK)")
 	secondaryStatStr := flag.String("secondary", "", "Secondary stat (STR/DEX/INT/LUK)")
+	ignoreCP := flag.Bool("ignoreCP", false, "Ignore positive CP increase and continue rolling until flame score is higher")
 	flag.Parse()
 
 	// Check if required arguments are provided
@@ -512,7 +411,10 @@ func main() {
 		fmt.Println("  flame.exe -main=INT -secondary=LUK")
 		fmt.Println("  flame.exe -main=DEX -secondary=STR")
 		fmt.Println("  flame.exe -main=LUK -secondary=DEX")
+		fmt.Println("  flame.exe -main=STR -secondary=DEX --ignoreCP")
 		fmt.Println("\nValid stats: STR, DEX, INT, LUK")
+		fmt.Println("Optional flags:")
+		fmt.Println("  --ignoreCP: Ignore positive CP increase and continue until flame score is higher")
 		os.Exit(1)
 	}
 
@@ -571,10 +473,6 @@ func main() {
 	unchangedCount := 0
 	tryCounter := 0
 
-	// Start the display refresh system
-	startDisplayRefresh()
-	defer stopDisplayRefresh()
-
 	// Main loop
 	rerollDelay := 0.5 // seconds between rerolls
 	splitDelay := 4    // number of parts to split the delay for key checking
@@ -582,78 +480,51 @@ func main() {
 
 	for {
 		tryCounter++
+		
+		fmt.Printf("\n%s=== Attempt %d ===%s\n", CYAN, tryCounter, RESET)
 
 		// Check for stop key combination
 		if automation.CheckStopKey() {
-			updateDisplay(&DisplayState{
-				Config:      config,
-				TryCounter:  tryCounter,
-				ExitMessage: "Ctrl+F1 detected. Exiting...",
-				ShouldExit:  true,
-			})
-			time.Sleep(500 * time.Millisecond) // Let final message display
+			fmt.Printf("\n%sCtrl+F1 detected. Exiting...%s\n", GREEN, RESET)
 			break
 		}
 
-		// Update display without status message - let it update silently
-		updateDisplay(&DisplayState{
-			Config:     config,
-			TryCounter: tryCounter,
-		})
-
 		// Capture before stats
+		fmt.Printf("Capturing before stats...\n")
 		beforeResult, err := captureFlameStats(logFilePath, config, true, tryCounter)
 		if err != nil {
-			updateDisplay(&DisplayState{
-				Config:      config,
-				TryCounter:  tryCounter,
-				ExitMessage: fmt.Sprintf("Error capturing before stats: %v", err),
-				ShouldExit:  true,
-			})
-			time.Sleep(500 * time.Millisecond)
+			fmt.Printf("Error capturing before stats: %v\n", err)
 			break
 		}
 
 		// Capture after stats
+		fmt.Printf("Capturing after stats...\n")
 		afterResult, err := captureFlameStats(logFilePath, config, false, tryCounter)
 		if err != nil {
-			updateDisplay(&DisplayState{
-				Config:      config,
-				TryCounter:  tryCounter,
-				ExitMessage: fmt.Sprintf("Error capturing after stats: %v", err),
-				ShouldExit:  true,
-			})
-			time.Sleep(500 * time.Millisecond)
+			fmt.Printf("Error capturing after stats: %v\n", err)
 			break
 		}
 
-		// Update display with flame comparison
-		updateDisplay(&DisplayState{
-			Config:       config,
-			TryCounter:   tryCounter,
-			BeforeResult: beforeResult,
-			AfterResult:  afterResult,
-		})
+		// Print flame comparison
+		printFlameComparisonBuffer(beforeResult, afterResult, config)
 
-		// Create combined image (left=before, right=after) - flame specific only
-		_, err = screenshot.CombineImagesHorizontal(beforeResult.Image, afterResult.Image, tryCounter)
+		// Create combined image using enhanced versions
+		_, err = screenshot.CombineEnhancedImages(tryCounter)
 		if err != nil {
 			// Just log warning, don't break execution
+			fmt.Printf("Warning: Failed to combine enhanced images: %v\n", err)
+			// Fallback to combining original images
+			_, err = screenshot.CombineImagesHorizontal(beforeResult.Image, afterResult.Image, tryCounter)
+			if err != nil {
+				fmt.Printf("Warning: Failed to combine original images: %v\n", err)
+			}
 		}
 
 		// Check if score hasn't changed
 		if previousAfterScore != -1 && previousAfterScore == afterResult.Score {
 			unchangedCount++
 			if unchangedCount >= 3 {
-				updateDisplay(&DisplayState{
-					Config:       config,
-					TryCounter:   tryCounter,
-					BeforeResult: beforeResult,
-					AfterResult:  afterResult,
-					ExitMessage:  "Score hasn't changed for 3 consecutive attempts. Stopping script...",
-					ShouldExit:   true,
-				})
-				time.Sleep(500 * time.Millisecond)
+				fmt.Printf("\n%sScore hasn't changed for 3 consecutive attempts. Stopping script...%s\n", CYAN, RESET)
 				break
 			}
 		} else {
@@ -666,69 +537,33 @@ func main() {
 
 		// Check for stop key again
 		if automation.CheckStopKey() {
-			updateDisplay(&DisplayState{
-				Config:      config,
-				TryCounter:  tryCounter,
-				ExitMessage: "Ctrl+F1 detected. Exiting...",
-				ShouldExit:  true,
-			})
-			time.Sleep(500 * time.Millisecond)
+			fmt.Printf("\n%sCtrl+F1 detected. Exiting...%s\n", GREEN, RESET)
 			break
 		}
 
-		// Check for POSITIVE CP increase first (trumps everything)
+		// Check for POSITIVE CP increase first (trumps everything unless ignoreCP is set)
 		if afterResult.Stats.HasCPIncrease && afterResult.Stats.CPIncrease > 0 {
-			updateDisplay(&DisplayState{
-				Config:       config,
-				TryCounter:   tryCounter,
-				BeforeResult: beforeResult,
-				AfterResult:  afterResult,
-				ExitMessage:  fmt.Sprintf("🎉 POSITIVE CP INCREASE DETECTED: +%d! This trumps everything - stopping here.", afterResult.Stats.CPIncrease),
-				ShouldExit:   true,
-			})
-			logSuccess(logFilePath, beforeResult, afterResult, config)
-			time.Sleep(500 * time.Millisecond)
-			break
+			if !*ignoreCP {
+				fmt.Printf("\n%s🎉 POSITIVE CP INCREASE DETECTED: +%d! This trumps everything - stopping here.%s\n", GREEN, afterResult.Stats.CPIncrease, RESET)
+				logSuccess(logFilePath, beforeResult, afterResult, config, tryCounter)
+				break
+			} else {
+				fmt.Printf("\n%s🎉 POSITIVE CP INCREASE DETECTED: +%d! (Ignoring due to --ignoreCP flag)%s\n", CYAN, afterResult.Stats.CPIncrease, RESET)
+			}
 		}
 
 		// If after score is better or equal, we're done
 		if afterResult.Score >= beforeResult.Score {
-			updateDisplay(&DisplayState{
-				Config:       config,
-				TryCounter:   tryCounter,
-				BeforeResult: beforeResult,
-				AfterResult:  afterResult,
-				ExitMessage:  "✅ Got a better or equal score! Stopping here.",
-				ShouldExit:   true,
-			})
-			logSuccess(logFilePath, beforeResult, afterResult, config)
-			time.Sleep(500 * time.Millisecond)
+			fmt.Printf("\n%s✅ Got a better or equal score! Stopping here.%s\n", GREEN, RESET)
+			logSuccess(logFilePath, beforeResult, afterResult, config, tryCounter)
 			break
 		}
 
-		// Update display with reroll message and cleared AFTER values
+		// Show reroll message
 		statusMsg := fmt.Sprintf("After score is lower. Rerolling in %.1f seconds...", rerollDelay)
 		if unchangedCount > 0 {
 			statusMsg = fmt.Sprintf("Score unchanged for %d attempts. Rerolling in %.1f seconds...", unchangedCount, rerollDelay)
 		}
-		
-		// Show the table with cleared AFTER values before rerolling
-		if !headerPrinted {
-			clearTerminal()
-			fmt.Printf("%sMapleStory Flame Scoring Tool - Live Mode%s\n", CYAN, RESET)
-			fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", 50), RESET)
-			fmt.Printf("Main Stat: %s%s%s | Secondary Stat: %s%s%s\n", GREEN, config.MainStat, RESET, GREEN, config.SecondaryStat, RESET)
-			fmt.Printf("Attempt: %s%d%s | Press Ctrl+F1 to exit\n", GREEN, tryCounter, RESET)
-			fmt.Printf("%s%s%s\n", CYAN, strings.Repeat("=", 50), RESET)
-			headerPrinted = true
-		} else {
-			fmt.Printf("\033[4;10H%s%d%s", GREEN, tryCounter, RESET)
-		}
-		
-		// Show comparison with cleared AFTER values
-		printFlameComparisonWithClearedAfter(beforeResult, config)
-		
-		// Print reroll message
 		fmt.Printf("\n%s%s%s\n", CYAN, statusMsg, RESET)
 
 		// Get the window rectangle again for clicking
