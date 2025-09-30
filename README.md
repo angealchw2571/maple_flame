@@ -1,117 +1,98 @@
-# MapleStory Flame Assistant
+# MapleStory Flame Potential Analyzer
 
-An automated tool to assist with flaming equipment in MapleStory. This tool uses computer vision and OCR to read flame stats and automatically reroll flames based on configurable criteria.
+A Go application that automates MapleStory flame potential analysis using OCR and computer vision.
 
-## Versions
+## Features
 
-- **Python version (v1)**: Original implementation (deprecated)
-- **Go version (v2)**: Current implementation with enhanced performance, reliability, and features
+- **Window Detection**: Automatically finds and focuses MapleStory window
+- **Screenshot Capture**: Captures specific regions of flame stat interface  
+- **OCR Processing**: Extracts text from flame stats using Tesseract
+- **Smart Analysis**: Analyzes flame potential and recommends keep/reroll
+- **Continuous Mode**: Monitors flame results until good stats are found
 
-## Features (Go Version)
+## Prerequisites
 
-- **Automatic MapleStory window detection**
-- **Real-time OCR of flame stats** (before and after reroll)
-- **Configurable main and secondary stats** via command-line flags
-- **Intelligent flame score calculation** with weighted stat values
-- **Enhanced image processing** with 2x upscaling for better OCR accuracy
-- **Direct terminal output** with color-coded stat comparisons
-- **Comprehensive logging** with attempt numbers and timestamps
-- **Combined screenshot generation** using enhanced images
-- **FIFO queue management** (maintains max 7 combined images)
-- **CP increase detection** with optional ignore flag
-- **Emergency stop** with Ctrl+F1
-- **Automatic cleanup** of temp files
-
-## Requirements
-
-- **Go 1.16 or later**
-- **Windows OS** (uses Win32 API)
-- **Tesseract OCR** installed and in your PATH
+1. **Go 1.21+** - Download from https://golang.org/
+2. **Tesseract OCR** - Download from https://github.com/UB-Mannheim/tesseract/wiki
+   - Make sure `tesseract.exe` is in your system PATH
+3. **MapleStory** running in windowed mode
 
 ## Installation
 
-1. Install Tesseract OCR on your system
-2. Navigate to the `goversion` directory
-3. Build the executable:
-   ```bash
-   go build -o flame.exe flame.go
-   ```
+1. Clone or download this repository
+2. Open terminal in the project directory
+3. Run: `go mod tidy` (if needed)
+4. Run: `go build`
+5. Run: `.\maple_flame.exe`
 
 ## Usage
 
-Run the flame scoring tool with your class stats:
+### Single Analysis Mode
+1. Start the application
+2. Choose option 1 (Single flame analysis)
+3. Have MapleStory flame interface open
+4. Follow the prompts to capture before/after stats
+5. Get recommendation on whether to keep the flame
 
-```bash
-# Basic usage
-flame.exe -main=STR -secondary=DEX
+### Continuous Mode  
+1. Choose option 2 (Continuous flame analysis)
+2. The app will monitor flame results automatically
+3. Stops when good stats are detected
 
-# With CP ignore flag (continues rolling despite positive CP increases)
-flame.exe -main=INT -secondary=LUK --ignoreCP
+### Configuration
+
+Edit the screen regions in `internal/analyzer/analyzer.go` if needed:
+
+```go
+// Adjust these coordinates based on your screen resolution
+beforeRegion = ScreenRegion{
+    X: 100,     // Distance from left edge of MapleStory window
+    Y: 200,     // Distance from top edge  
+    Width: 200, // Width of stats area
+    Height: 150 // Height of stats area
+}
 ```
 
-### Valid Stats
-- **STR** (Strength)
-- **DEX** (Dexterity) 
-- **INT** (Intelligence)
-- **LUK** (Luck)
+## What Makes a Good Flame?
 
-## Controls
+The analyzer looks for these in order of priority:
 
-- Press **Ctrl+F1** at any time to stop the script
-- The script automatically stops when:
-  - A better or equal flame score is achieved
-  - A positive CP increase is detected (unless `--ignoreCP` is used)
-  - The same score appears 3 consecutive times
+1. **Perfect Roll**: Both Item Drop Rate + Mesos Obtained
+2. **High Item Drop**: ≥20% Item Drop Rate  
+3. **High Mesos**: ≥20% Mesos Obtained
+4. **Improvement**: Better than previous flame
+5. **Higher Percentages**: Same stats but higher values
 
-## How It Works
+## Troubleshooting
 
-The Go version calculates flame scores using the formula:
-```
-Score = Main Stat + (Weapon/Magic Attack × 4) + (% All Stat × 10) + (Secondary Stat ÷ 8)
-```
+**"MapleStory window not found"**
+- Make sure MapleStory is running
+- Run MapleStory in windowed mode (not fullscreen)
+- Make sure window title contains "MapleStory"
 
-**Process for each attempt:**
-1. **Capture before stats** - Screenshots and OCRs current flame stats
-2. **Capture after stats** - Screenshots and OCRs reroll results  
-3. **Enhanced image processing** - Creates 2x upscaled images for better OCR accuracy
-4. **Score calculation** - Computes weighted flame scores for comparison
-5. **Decision making** - Keeps better scores or continues rolling
-6. **Image combination** - Creates side-by-side comparison images
-7. **Cleanup** - Manages temp files and maintains FIFO queue
+**"Tesseract failed"**  
+- Install Tesseract OCR from the link above
+- Add tesseract.exe to your system PATH
+- The app will use simulated results if Tesseract isn't available
 
-## Project Structure
+**Wrong screen regions captured**
+- Adjust coordinates in `GetTargetScreenRegions()` function
+- Use "Test screenshot capture" option to verify regions
+- Screenshots are saved in `temp/` folder for verification
+
+## File Structure
 
 ```
-goversion/
-├── flame.go              - Main application logic
-├── flame.exe             - Compiled executable
+maple_flame/
+├── main.go                    # Main application entry point
 ├── internal/
-│   ├── automation/       - Mouse/keyboard automation
-│   ├── flame/           - Stat extraction and scoring
-│   ├── ocr/             - OCR with image enhancement
-│   ├── screenshot/      - Screen capture and image processing
-│   └── window/          - Windows API integration
-└── temp/                - Generated logs and combined images
+│   ├── window/window.go       # MapleStory window detection
+│   ├── screenshot/screenshot.go # Screen capture functionality  
+│   ├── ocr/ocr.go            # OCR text extraction
+│   └── analyzer/analyzer.go   # Flame analysis logic
+└── temp/                      # Debug screenshots saved here
 ```
 
-## Safety Features
+## License
 
-- **Window detection** to ensure MapleStory is active
-- **Emergency stop** hotkey (Ctrl+F1)
-- **Enhanced screenshots** saved for verification
-- **Configurable delays** between actions (80ms enter key delays)
-- **Automatic stuck detection** when stats don't change
-- **CP increase detection** to prevent accidental worse flames
-
-## Logging
-
-The tool creates comprehensive logs in `temp/flame_logs.txt` including:
-- Timestamped attempts with attempt numbers
-- Raw OCR text output
-- Extracted stat values
-- Calculated flame scores
-- Success notifications
-
-## Disclaimer
-
-Use this tool responsibly and at your own risk. Automated tools may be against MapleStory's Terms of Service.
+MIT License - feel free to modify and distribute.

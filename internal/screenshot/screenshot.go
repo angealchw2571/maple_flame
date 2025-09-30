@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"maple_flame/goversion/internal/window"
+	"maple_flame/internal/window"
 )
 
 var (
@@ -450,9 +450,11 @@ func enhanceContrast(img *image.RGBA) *image.RGBA {
 			var enhanced uint8
 			if gray > 128 {
 				// Bright pixels - make brighter
-				enhanced = uint8(float64(gray)*1.2)
-				if enhanced > 255 {
+				brightened := float64(gray) * 1.2
+				if brightened > 255 {
 					enhanced = 255
+				} else {
+					enhanced = uint8(brightened)
 				}
 			} else {
 				// Dark pixels - make darker
